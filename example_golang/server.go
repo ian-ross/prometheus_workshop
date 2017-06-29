@@ -4,7 +4,10 @@ import (
 	"math/rand"
 	"net/http"
 	_ "net/http/pprof"
+	"strconv"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type responseOpts struct {
@@ -46,14 +49,51 @@ var opts = map[string]map[string]responseOpts{
 	},
 }
 
+var (
+	httpResponses = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_responses_total",
+			Help: "HTTP response counts",
+		},
+		[]string{"method", "url", "code"},
+	)
+	httpResponseDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "http_responses_duration_seconds",
+			Help: "HTTP response latencies",
+			Buckets: []float64{0.05, },
+		},
+		[]string{"method", "url", "code"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(httpResponses)
+	prometheus.MustRegister(httpResponseDuration)
+}
+
+func incResponses(start time.Time, method string, code int, url string) {
+	duration := float64(time.Since(start) / time.Millisecond)
+	codestr := strconv.Itoa(code)
+	httpResponses.With(
+		prometheus.Labels{"method": method, "url": url, "code": codestr},
+	).Inc()
+	httpResponseDuration.With(
+		prometheus.Labels{"method": method, "url": url, "code": codestr},
+	).Observe(duration)
+}
+
 func handleAPI(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	pathOpts, ok := opts[r.URL.Path]
 	if !ok {
+		incResponses(start, r.Method, http.StatusNotFound, "")
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
 	}
 	methodOpts, ok := pathOpts[r.Method]
 	if !ok {
+		incResponses(start, r.Method, http.StatusMethodNotAllowed, r.URL.Path)
 		http.Error(w, "Method not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -68,6 +108,7 @@ func handleAPI(w http.ResponseWriter, r *http.Request) {
 		(methodOpts.baseLatency + time.Duration(rand.NormFloat64()*float64(methodOpts.baseLatency)/10)) * latencyFactor,
 	)
 	if rand.Float64() <= methodOpts.errorRatio*errorFactor {
+		incResponses(start, r.Method, http.StatusInternalServerError, r.URL.Path)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }

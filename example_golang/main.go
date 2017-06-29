@@ -8,6 +8,7 @@ import (
 
 	"github.com/justinas/alice"
 	"github.com/streadway/handy/report"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -19,6 +20,7 @@ var (
 func main() {
 	flag.Parse()
 
+	http.Handle("/metrics", promhttp.Handler())
 	http.HandleFunc("/api/", handleAPI)
 
 	// Log every received HTTP request to stdout.
